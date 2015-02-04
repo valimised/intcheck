@@ -1,7 +1,7 @@
 #!/usr/bin/python2.7
 # -*- coding: UTF8 -*-
 
-#Copyright (c) 2011 - 2013 Cybernetica AS
+# Copyright (c) 2011–2015 Cybernetica AS
 
 """
 Tool for integrity checking directory-tree.
@@ -43,16 +43,20 @@ COMMAND = None
 ERR_ARGUMENTS = 'Invalid number of arguments'
 ERR_OK = ''
 
+
 def canonic_name(name, prefix):
     return name.replace(prefix, './', 1)
+
 
 def canonic_root(root):
     if not root.endswith('/'):
         root += '/'
     return root
 
+
 def walkerror(err):
     print 'WARNING! File or directory not included: "%s"' % err
+
 
 # Checksum methods
 
@@ -61,7 +65,7 @@ def compute_checksum(ffile):
     _rf = None
     try:
         _rf = open(ffile, "r")
-        _s = hashlib.sha256() # pylint: disable=E1101
+        _s = hashlib.sha256()  # pylint: disable=E1101
         _data = _rf.read(READ_BUFFER_SIZE)
         while _data:
             _s.update(_data)
@@ -75,7 +79,7 @@ def compute_checksum(ffile):
 
 def compute_directory_checksum(lst):
     import hashlib
-    _s = hashlib.sha256() # pylint: disable=E1101
+    _s = hashlib.sha256()  # pylint: disable=E1101
     for el in lst:
         _s.update(el)
     return _s.hexdigest()
@@ -85,15 +89,15 @@ def analyze_directory(directory):
     checksums = {}
     # The directory tree is traversed in bottom-up order so that
     # we already have children's results when we analyze the parent
-    for root, dirs, files in os.walk(directory, \
-                                        topdown = False, onerror = walkerror):
+    for root, dirs, files in os.walk(directory, topdown=False,
+                                     onerror=walkerror):
 
         # We use canonic names to overcome naming problems
         # in case of different mountpoints
         rcn = canonic_name(root, directory)
 
         print 'Analyzing directory "%s" containing %d file(s), %d dir(s)' % \
-                (rcn, len(files), len(dirs))
+              (rcn, len(files), len(dirs))
 
         # Checksum of the directory is the checksum of its children
         input_cs = []
@@ -105,7 +109,7 @@ def analyze_directory(directory):
             if os.path.islink(dn):
                 continue
 
-            if checksums.has_key(cdn):
+            if cdn in checksums:
                 input_cs.append(checksums[cdn])
             else:
                 print 'WARNING! Checksum for "%s" was not found' % cdn
@@ -131,6 +135,7 @@ def analyze_directory(directory):
 
     return checksums
 
+
 # CMD help
 
 def check_help():
@@ -140,11 +145,13 @@ def check_help():
         return False, 'Unknown command'
     return True, ERR_OK
 
+
 def usage_help():
     print 'Command: HELP'
     print 'Display help-text about one of the available commands'
     print 'Usage: %s help <cmd>' % sys.argv[0]
     print '\t<cmd>:\t%s' % CMD_LIST.keys()
+
 
 def exec_help():
     command = CMD_LIST[sys.argv[2]]
@@ -169,6 +176,7 @@ def check_create():
         return False, 'File "%s" already exists' % of
 
     return True, ERR_OK
+
 
 def usage_create():
     print 'Command: CREATE'
@@ -219,6 +227,7 @@ def check_verify():
 
     return True, ERR_OK
 
+
 def usage_verify():
     print 'Command: VERIFY'
     print 'Verify integrity-check file (ICF) for given directory'
@@ -236,7 +245,7 @@ def check_equal(disk, sign):
 
     for el in disk_keys:
 
-        if not sign.has_key(el):
+        if el not in sign:
             ret = False
             print 'ERROR! File "%s" is on DISK, but not in ICF' % el
             continue
@@ -244,7 +253,7 @@ def check_equal(disk, sign):
         if not sign[el] == disk[el]:
             ret = False
             print 'ERROR! Checksums for "%s" differ: DISK(%s), ICF(%s)' % \
-                            (el, disk[el], sign[el])
+                (el, disk[el], sign[el])
 
         del sign[el]
 
@@ -255,7 +264,6 @@ def check_equal(disk, sign):
         print 'ERROR! File "%s" is in ICF, but not on DISK' % el
 
     return ret
-
 
 
 def exec_verify():
@@ -272,7 +280,7 @@ def exec_verify():
         for line in lines:
             record = line.rstrip().split('\t')
             if not len(record) == 2:
-                raise Exception, 'Invalid input'
+                raise Exception('Invalid input')
             results_file[record[1]] = record[0]
     finally:
         if _if:
@@ -285,21 +293,21 @@ def exec_verify():
         print 'All directory and file checksums verified correctly'
 
 
-CMD_CREATE = {METH_CHECK: check_create, \
-            METH_EXEC: exec_create, \
-            METH_USAGE: usage_create}
+CMD_CREATE = {METH_CHECK: check_create,
+              METH_EXEC: exec_create,
+              METH_USAGE: usage_create}
 
-CMD_VERIFY = {METH_CHECK: check_verify, \
-            METH_EXEC: exec_verify, \
-            METH_USAGE: usage_verify}
+CMD_VERIFY = {METH_CHECK: check_verify,
+              METH_EXEC: exec_verify,
+              METH_USAGE: usage_verify}
 
-CMD_HELP = {METH_CHECK: check_help, \
-            METH_EXEC: exec_help, \
+CMD_HELP = {METH_CHECK: check_help,
+            METH_EXEC: exec_help,
             METH_USAGE: usage_help}
 
 
-CMD_LIST = {'create': CMD_CREATE, \
-            'verify': CMD_VERIFY, \
+CMD_LIST = {'create': CMD_CREATE,
+            'verify': CMD_VERIFY,
             'help': CMD_HELP}
 
 
@@ -316,7 +324,7 @@ def check_usage():
         usage()
 
     cmd = sys.argv[1]
-    if not cmd in CMD_LIST:
+    if cmd not in CMD_LIST:
         usage()
 
     global COMMAND
