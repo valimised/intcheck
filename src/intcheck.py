@@ -1,7 +1,6 @@
-#!/usr/bin/python2.7
-# -*- coding: UTF8 -*-
+#!/usr/bin/env python3
 
-# Copyright (c) 2011–2015 Cybernetica AS
+# Copyright (c) 2011–2024 Cybernetica AS
 
 """
 Tool for integrity checking directory-tree.
@@ -28,20 +27,22 @@ The verification fails if:
 Otherwise the verification shall be successful
 """
 
-import sys
-import os
+
+import argparse
+import hashlib
+import logging
 import os.path
+import sys
+
 
 READ_BUFFER_SIZE = 4096
 
-METH_USAGE = 'meth_usage'
-METH_EXEC = 'meth_exec'
-METH_CHECK = 'meth_check'
+EXIT_OK = 0
+EXIT_ERR = 1
+EXIT_VERIFY = 2
+EXIT_USAGE = 3
 
-COMMAND = None
-
-ERR_ARGUMENTS = 'Invalid number of arguments'
-ERR_OK = ''
+log = logging.getLogger(__name__)
 
 
 def canonic_name(name, prefix):
@@ -55,33 +56,25 @@ def canonic_root(root):
 
 
 def walkerror(err):
-    print 'WARNING! File or directory not included: "%s"' % err
+    log.warning("File or directory not included: %r", err)
 
 
 # Checksum methods
 
 def compute_checksum(ffile):
-    import hashlib
-    _rf = None
-    try:
-        _rf = open(ffile, "r")
-        _s = hashlib.sha256()  # pylint: disable=E1101
+    _s = hashlib.sha256()
+    with open(ffile, 'rb') as _rf:
         _data = _rf.read(READ_BUFFER_SIZE)
         while _data:
             _s.update(_data)
             _data = _rf.read(READ_BUFFER_SIZE)
-
-        return _s.hexdigest()
-    finally:
-        if _rf:
-            _rf.close()
+    return _s.hexdigest()
 
 
 def compute_directory_checksum(lst):
-    import hashlib
-    _s = hashlib.sha256()  # pylint: disable=E1101
+    _s = hashlib.sha256()
     for el in lst:
-        _s.update(el)
+        _s.update(el.encode('utf-8'))
     return _s.hexdigest()
 
 
@@ -96,8 +89,8 @@ def analyze_directory(directory):
         # in case of different mountpoints
         rcn = canonic_name(root, directory)
 
-        print 'Analyzing directory "%s" containing %d file(s), %d dir(s)' % \
-              (rcn, len(files), len(dirs))
+        print(f'Analyzing directory "{rcn}" containing '
+              f'{len(files)} file(s), {len(dirs)} dir(s)')
 
         # Checksum of the directory is the checksum of its children
         input_cs = []
@@ -112,7 +105,7 @@ def analyze_directory(directory):
             if cdn in checksums:
                 input_cs.append(checksums[cdn])
             else:
-                print 'WARNING! Checksum for "%s" was not found' % cdn
+                log.warning("Checksum for %r was not found", cdn)
 
         # Second find checksums for the files
         for fname in files:
@@ -136,219 +129,159 @@ def analyze_directory(directory):
     return checksums
 
 
-# CMD help
-
-def check_help():
-    if not (len(sys.argv) == 3):
-        return False, ERR_ARGUMENTS
-    if not (sys.argv[2] in CMD_LIST.keys()):
-        return False, 'Unknown command'
-    return True, ERR_OK
-
-
-def usage_help():
-    print 'Command: HELP'
-    print 'Display help-text about one of the available commands'
-    print 'Usage: %s help <cmd>' % sys.argv[0]
-    print '\t<cmd>:\t%s' % CMD_LIST.keys()
-
-
-def exec_help():
-    command = CMD_LIST[sys.argv[2]]
-    command[METH_USAGE]()
-
-
-# CMD create
-
-def check_create():
-    if not (len(sys.argv) == 4):
-        return False, ERR_ARGUMENTS
-
-    directory = sys.argv[2]
-    if not os.path.exists(directory):
-        return False, 'Path does not exist'
-
-    if not os.path.isdir(directory):
-        return False, 'Path is not a directory'
-
-    of = sys.argv[3]
-    if os.path.exists(of):
-        return False, 'File "%s" already exists' % of
-
-    return True, ERR_OK
-
-
-def usage_create():
-    print 'Command: CREATE'
-    print 'Create integrity-check file (ICF) for given directory'
-    print 'Usage: %s create <dir> <icf>' % sys.argv[0]
-    print '\t<dir>:\tDirectory to create integrity-check file for'
-    print '\t<icf>:\tIntegrity-check file to be created'
-
-
-def exec_create():
-    directory = sys.argv[2]
-    outfile = sys.argv[3]
-
+def exec_create(directory, outfile):
     results = analyze_directory(canonic_root(directory))
-
-    _of = None
-    try:
-        _of = open(outfile, 'w')
-
-        files = results.keys()
-        files.sort()
-        for el in files:
-            _of.write('%s\t%s\n' % (results[el], el))
-    finally:
-        if _of:
-            _of.close()
-
-
-# CMD verify
-
-def check_verify():
-    if not (len(sys.argv) == 4):
-        return False, ERR_ARGUMENTS
-
-    directory = sys.argv[2]
-    if not os.path.exists(directory):
-        return False, 'Path does not exist'
-
-    if not os.path.isdir(directory):
-        return False, 'Path is not a directory'
-
-    inf = sys.argv[3]
-    if not os.path.exists(inf):
-        return False, 'File "%s" does not exist' % inf
-
-    if not os.path.isfile(inf):
-        return False, 'Not a file: "%s"' % inf
-
-    return True, ERR_OK
-
-
-def usage_verify():
-    print 'Command: VERIFY'
-    print 'Verify integrity-check file (ICF) for given directory'
-    print 'Usage: %s verify <dir> <icf>' % sys.argv[0]
-    print '\t<dir>:\tDirectory to verify integrity-check file against'
-    print '\t<icf>:\tIntegrity-check file to be used in verification'
+    with open(outfile, 'w') as _of:
+        for el in sorted(results):
+            _of.write(f"{results[el]}\t{el}\n")
 
 
 def check_equal(disk, sign):
 
     ret = True
 
-    disk_keys = disk.keys()
-    disk_keys.sort()
+    for ffile in sorted(disk):
 
-    for el in disk_keys:
-
-        if el not in sign:
+        if ffile not in sign:
             ret = False
-            print 'ERROR! File "%s" is on DISK, but not in ICF' % el
+            log.error("File %r is on DISK, but not in ICF", ffile)
             continue
 
-        if not sign[el] == disk[el]:
+        if not sign[ffile] == disk[ffile]:
             ret = False
-            print 'ERROR! Checksums for "%s" differ: DISK(%s), ICF(%s)' % \
-                (el, disk[el], sign[el])
+            log.error(
+                "Checksums for %r differ: DISK(%s), ICF(%s)",
+                ffile,
+                disk[ffile],
+                sign[ffile],
+            )
 
-        del sign[el]
+        del sign[ffile]
 
-    sign_keys = sign.keys()
-    sign_keys.sort()
-
-    for el in sign_keys:
-        print 'ERROR! File "%s" is in ICF, but not on DISK' % el
+    for ffile in sorted(sign):
+        log.error("File %r is in ICF, but not on DISK", ffile)
 
     return ret
 
 
-def exec_verify():
-    directory = sys.argv[2]
-    infile = sys.argv[3]
-
+def exec_verify(directory, infile):
     results_dir = analyze_directory(canonic_root(directory))
     results_file = {}
 
-    _if = None
+    with open(infile, 'r') as _if:
+        for line_no, line in enumerate(_if.readlines(), start=1):
+            try:
+                checksum, filepath = line.rstrip().split("\t")
+            except ValueError:
+                log.error("Invalid line #%d: %r", line_no, line)
+                return False
+            results_file[filepath] = checksum
+
+    return check_equal(results_dir, results_file)
+
+
+class ExistingDirectory(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if not os.path.exists(values):
+            raise ValueError(f'Path "{values}" does not exist')
+
+        if not os.path.isdir(values):
+            raise ValueError(f'Path "{values}" is not a directory')
+
+        setattr(namespace, self.dest, values)
+
+
+class ExistingFile(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+
+        if not os.path.exists(values):
+            raise ValueError(f'File "{values}" does not exist')
+
+        if not os.path.isfile(values):
+            raise ValueError(f'Not a file: "{values}"')
+
+        setattr(namespace, self.dest, values)
+
+
+class NewFile(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if os.path.exists(values):
+            raise ValueError(f'File "{values}" already exists')
+        setattr(namespace, self.dest, values)
+
+
+class IntcheckParser:
+
+    def __init__(self):
+        self.parser = argparse.ArgumentParser(
+            description='Directory-structure integrity verification tool',
+            usage='''intcheck <command> [<args>]
+
+The available commands are:
+   create     Create directory integrity-check file
+   verify     Verify directory integrity-check file
+''')
+        self.parser.add_argument('command', help='Subcommand to run')
+
+    def parse(self):
+        args = self.parser.parse_args(sys.argv[1:2])
+
+        if not hasattr(self, args.command):
+            log.error("Unrecognized command")
+            self.parser.print_help()
+            sys.exit(EXIT_USAGE)
+        return args.command, getattr(self, args.command)()
+
+    def create(self):
+        pp = argparse.ArgumentParser(
+            description='Create directory integrity-check file (ICF)')
+        pp.add_argument('directory',
+                        action=ExistingDirectory,
+                        help='Directory to create ICF for')
+        pp.add_argument('icf',
+                        action=NewFile,
+                        help='ICF to be created')
+        args = pp.parse_args(sys.argv[2:])
+        return args
+
+    def verify(self):
+        pp = argparse.ArgumentParser(
+            description='Verify directory integrity-check file (ICF)')
+        pp.add_argument('directory',
+                        action=ExistingDirectory,
+                        help='Directory to verify ICF against')
+        pp.add_argument('icf',
+                        action=ExistingFile,
+                        help='ICF to be used in verification')
+        args = pp.parse_args(sys.argv[2:])
+        return args
+
+
+def main():
+    """Main routine."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    parser = IntcheckParser()
     try:
-        _if = open(infile, 'r')
-        lines = _if.readlines()
-        for line in lines:
-            record = line.rstrip().split('\t')
-            if not len(record) == 2:
-                raise Exception('Invalid input')
-            results_file[record[1]] = record[0]
-    finally:
-        if _if:
-            _if.close()
+        cmd, args = parser.parse()
+    except ValueError as err:
+        log.error(str(err))
+        return EXIT_ERR
 
-    if not check_equal(results_dir, results_file):
-        print 'ERROR - Integrity check failed'
-    else:
-        print 'OK - Integrity check successful'
-        print 'All directory and file checksums verified correctly'
+    if cmd == 'verify':
+        if not exec_verify(args.directory, args.icf):
+            log.error("Integrity check failed")
+            return EXIT_VERIFY
 
+        print('OK - Integrity check successful')
+        print('All directory and file checksums verified correctly')
 
-CMD_CREATE = {METH_CHECK: check_create,
-              METH_EXEC: exec_create,
-              METH_USAGE: usage_create}
+    elif cmd == 'create':
+        exec_create(args.directory, args.icf)
+        print('OK - Integrity file created successfully')
 
-CMD_VERIFY = {METH_CHECK: check_verify,
-              METH_EXEC: exec_verify,
-              METH_USAGE: usage_verify}
-
-CMD_HELP = {METH_CHECK: check_help,
-            METH_EXEC: exec_help,
-            METH_USAGE: usage_help}
-
-
-CMD_LIST = {'create': CMD_CREATE,
-            'verify': CMD_VERIFY,
-            'help': CMD_HELP}
-
-
-def usage():
-    print 'Directory-structure integrity verification tool'
-    print 'Usage: %s <cmd> <args>' % sys.argv[0]
-    print '\t<cmd>:\t\t%s' % CMD_LIST.keys()
-    print '\t<args>:\t\t%s help <cmd>' % sys.argv[0]
-    sys.exit(0)
-
-
-def check_usage():
-    if len(sys.argv) < 2:
-        usage()
-
-    cmd = sys.argv[1]
-    if cmd not in CMD_LIST:
-        usage()
-
-    global COMMAND
-    COMMAND = CMD_LIST[cmd]
-
-    res, ret_str = COMMAND[METH_CHECK]()
-
-    if not res:
-        print 'ERROR occured while executing command %s:' % cmd,
-        print '"%s"' % ret_str
-        COMMAND[METH_USAGE]()
-        sys.exit(0)
+    return EXIT_OK
 
 
 if __name__ == '__main__':
-
-    try:
-        check_usage()
-        if COMMAND:
-            COMMAND[METH_EXEC]()
-        else:
-            print 'Error - unknown command'
-    finally:
-        pass
-
-
-# vim:set ts=4 sw=4 et fileencoding=utf8:
+    sys.exit(main())
